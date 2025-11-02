@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NDA 一键填充（手机可用）</title>
+  <style>
+    body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans SC", "PingFang SC", "Microsoft Yahei", sans-serif; margin:0; background:#0a0014; color:#e6e6e6}
+    .wrap{max-width:960px; margin:0 auto; padding:20px}
+    h1{font-size:22px; margin:0 0 12px}
+    .card{background:#1e1e1e; border-radius:16px; padding:16px; margin:12px 0; box-shadow:0 8px 30px rgba(0,0,0,.25)}
+    label{display:block; font-size:14px; opacity:.9; margin-bottom:8px}
+    input[type=file], textarea, select {width:100%; background:#0a0014; color:#e6e6e6; border:1px solid #5a00ff55; border-radius:12px; padding:12px; box-sizing:border-box}
+    textarea{min-height:160px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:13px}
+    .row{display:grid; grid-template-columns:1fr; gap:12px}
+    @media (min-width:720px){.row{grid-template-columns:1fr 1fr}}
+    .btn{cursor:pointer; border:0; border-radius:14px; padding:12px 16px; font-weight:600; background-image:linear-gradient(135deg,#5A00FF,#E500FF,#00D1FF); color:#0a0014}
+    .btn:disabled{opacity:.5; cursor:not-allowed}
+    .muted{opacity:.75; font-size:13px}
+    .badge{display:inline-block; padding:4px 10px; border-radius:999px; background:#00d1ff22; border:1px solid #00d1ff66; color:#e6e6e6; font-size:12px; margin-right:8px}
+    .ok{background:#00d1ff22; border-color:#00d1ff66}
+    .warn{background:#ff6b0022; border-color:#ff6b0066}
+    .err{background:#ff003322; border-color:#ff003366}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px}
+    .footer{opacity:.7; font-size:12px; text-align:center; margin-top:12px}
+  </style>
+  <!-- libs for docx read/write in browser -->
+  <script src="https://unpkg.com/pizzip@3.1.4/dist/pizzip.min.js"></script>
+  <script src="https://unpkg.com/pizzip@3.1.4/dist/pizzip-utils.min.js"></script>
+  <script src="https://unpkg.com/docxtemplater@3.44.0/build/docxtemplater.js"></script>
+  <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>📄 NDA 一键填充（手机可用、离线运行）</h1>
+    <div class="card">
+      <p class="muted">把投资人/合作方发来的 <b>DOCX 模板</b> 和 <b>公司信息</b> 作为输入；自动填公司名称、法定代表人、统一社会信用代码、地址、当天日期等，并 <b>检测保密期限是否 ≥ 2 年</b>。<br/>支持两种方式：
+        <span class="badge">模板占位符模式</span>
+        <span class="badge">智能替换模式（无占位符）</span>
+      </p>
+      <div class="row">
+        <div>
+          <label>1) 上传 NDA 模板（仅 .docx）</label>
+          <input type="file" id="file" accept=".docx" />
+        </div>
+        <div>
+          <label>2) 公司信息（JSON 或 YAML，示例见下）</label>
+          <textarea id="data" placeholder='{
+  "company_name": "众禾新材料（广州）有限公司",
+  "legal_rep": "张三",
+  "usc_code": "91440101MA5XXXXXXX",
+  "address": "广州市黄埔区科学大道 99 号",
+  "contact_name": "李四",
+  "contact_email": "lisa@example.com",
+  "contact_phone": "+86 138 0000 0000",
+  "party_role": "乙方"  
+}'></textarea>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>3) 选择工作模式</label>
+          <select id="mode">
+            <option value="template">模板占位符模式（推荐）</option>
+            <option value="smart">智能替换模式（常见标签识别）</option>
+          </select>
+        </div>
+        <div>
+          <label>4) 日期格式</label>
+          <select id="datefmt">
+            <option value="YYYY年M月D日">YYYY年M月D日</option>
+            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+            <option value="YYYY/MM/DD">YYYY/MM/DD</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap">
+        <button class="btn" id="run">🚀 一键填充并下载</button>
+        <button class="btn" id="demo">⚙️ 生成示例模板</button>
+      </div>
+      <div id="status" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <b>占位符命名建议（模板模式）：</b>
+      <pre class="mono">{{company_name}}  {{legal_rep}}  {{usc_code}}  {{address}}
+{{contact_name}}  {{contact_email}}  {{contact_phone}}  {{party_role}}
+{{today}} （会自动填入今日日期）</pre>
+      <p class="muted">把以上占位符放进你的 NDA DOCX 模板即可；首次用时建议让对方提供 Word 版，或自行把 PDF 转为 Word 再处理。</p>
+      <b>智能替换支持的常见中文标签（无需占位符）：</b>
+      <pre class="mono">公司名称 / 名称 / 单位名称
+法定代表人 / 法人
+统一社会信用代码 / 信用代码 / 统一社会代码
+地址 / 注册地址 / 通讯地址
+联系人 / 联系电话 / 邮箱
+披露方 / 接收方 / 甲方 / 乙方
+日期（自动填入今日）
+保密期限 / 保密期（自动检测 ≥ 2 年）</pre>
+    </div>
+
+    <div class="footer">© chouchou ai · 本页面完全本地运行，不上传文件；如需高级识别或 PDF 表单，请后续扩展。</div>
+  </div>
+
+<script>
+// --- tiny YAML parser fallback ---
+function parseData(text){
+  try { return JSON.parse(text) } catch(e) {}
+  // naive YAML (key: value per line)
+  const obj={};
+  text.split(/\r?\n/).forEach(line=>{
+    const m=line.match(/^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$/);
+    if(m){ obj[m[1].trim()]=m[2].trim().replace(/^"|"$/g,'').replace(/^'|'$/g,''); }
+  });
+  return obj;
+}
+
+function fmtToday(fmt){
+  const d=new Date();
+  const Y=d.getFullYear();
+  const M=d.getMonth()+1;
+  const D=d.getDate();
+  return fmt.replace('YYYY', Y).replace('MM', String(M).padStart(2,'0')).replace('DD', String(D).padStart(2,'0'))
+            .replace('M', M).replace('D', D);
+}
+
+function report(msg, type='ok'){
+  const el=document.getElementById('status');
+  el.innerHTML = `<div class="badge ${type}">${msg}</div>`;
+}
+
+function readDocxAsZip(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload = e=>{
+      try{ resolve(new PizZip(e.target.result)); }
+      catch(err){ reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsBinaryString(file);
+  });
+}
+
+function saveDocx(zip, outName){
+  const blob=zip.generate({type:"blob", mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
+  saveAs(blob, outName);
+}
+
+function smartReplaceXML(xml, data, dateStr){
+  const patterns=[
+    {keys:['公司名称','名称','单位名称'], field:'company_name'},
+    {keys:['法定代表人','法人'], field:'legal_rep'},
+    {keys:['统一社会信用代码','信用代码','统一社会代码'], field:'usc_code'},
+    {keys:['地址','注册地址','通讯地址'], field:'address'},
+    {keys:['联系人'], field:'contact_name'},
+    {keys:['联系电话','电话','联系方式'], field:'contact_phone'},
+    {keys:['邮箱','电子邮箱'], field:'contact_email'},
+    {keys:['披露方','甲方'], field:'discloser', fallback:'company_name'},
+    {keys:['接收方','乙方'], field:'receiver', fallback:'company_name'},
+  ];
+  // Replace values after label, handling separators like ：: 、 空格 以及下划线占位
+  patterns.forEach(p=>{
+    const val = data[p.field] || (p.fallback ? data[p.fallback] : '');
+    if(!val) return;
+    p.keys.forEach(k=>{
+      const re=new RegExp(`(${k}\s*[：:]?\s*)(?:[_　\u3000\s]{2,}|[^\n<]{0,40})`, 'g');
+      xml = xml.replace(re, `$1${val}`);
+    });
+  });
+  // today
+  xml = xml.replace(/(日期\s*[：:]?\s*)(?:[_　\u3000\s]{2,}|[^\n<]{0,20})/g, `$1${dateStr}`);
+  return xml;
+}
+
+function extractTextForTermCheck(xml){
+  // strip xml tags
+  const text = xml.replace(/<[^>]+>/g,'');
+  return text;
+}
+
+function checkConfidentialTerm(text){
+  // Look for 保密期限 / 保密期 followed by number + 年/月/天
+  const m = text.match(/保密(?:期限|期)[^\d]{0,10}(\d{1,3})(年|个月|月|天|日)/);
+  if(!m) return {found:false, ok:null, raw:null};
+  const n = parseInt(m[1],10);
+  let years = 0;
+  if(m[2]==='年'){ years = n; }
+  else if(m[2]==='个月' || m[2]==='月'){ years = n/12; }
+  else { years = n/365; }
+  return {found:true, ok: years>=2, raw: `${n}${m[2]} ≈ ${years.toFixed(2)}年`};
+}
+
+async function run(){
+  const file = document.getElementById('file').files[0];
+  if(!file){ report('请先选择 .docx 文件','err'); return; }
+  const dataRaw = document.getElementById('data').value.trim();
+  const data = parseData(dataRaw);
+  data.today = fmtToday(document.getElementById('datefmt').value);
+  const mode = document.getElementById('mode').value;
+
+  try{
+    const zip = await readDocxAsZip(file);
+    if(mode==='template'){
+      const doc = new window.docxtemplater().loadZip(zip);
+      doc.setData(data);
+      try { doc.render(); }
+      catch(e){
+        console.error(e);
+        report('模板模式渲染失败：请检查占位符命名或文档是否被加密','err');
+        return;
+      }
+      const out=doc.getZip();
+      saveDocx(out, file.name.replace(/\.docx$/i,'')+"_已填充.docx");
+      // term check (best-effort): read xml and evaluate
+      try{
+        const xml = out.file('word/document.xml').asText();
+        const t = extractTextForTermCheck(xml);
+        const r = checkConfidentialTerm(t);
+        if(r.found){
+          report(r.ok ? `✔ 保密期限检测：通过（${r.raw}）` : `⚠ 保密期限可能不足 2 年（${r.raw}）` , r.ok? 'ok':'warn');
+        }else{
+          report('ℹ 未在文档中识别到“保密期限/保密期”，请人工复核','warn');
+        }
+      }catch(err){ report('已导出；术语检测失败（读取文本出错）','warn'); }
+    } else {
+      // smart mode: manipulate XML directly
+      let xml = zip.file('word/document.xml').asText();
+      xml = smartReplaceXML(xml, data, data.today);
+      zip.file('word/document.xml', xml);
+      saveDocx(zip, file.name.replace(/\.docx$/i,'')+"_智能填充.docx");
+      const t = extractTextForTermCheck(xml);
+      const r = checkConfidentialTerm(t);
+      if(r.found){
+        report(r.ok ? `✔ 保密期限检测：通过（${r.raw}）` : `⚠ 保密期限可能不足 2 年（${r.raw}）` , r.ok? 'ok':'warn');
+      }else{
+        report('ℹ 未在文档中识别到“保密期限/保密期”，请人工复核','warn');
+      }
+    }
+  }catch(err){
+    console.error(err);
+    report('读取/处理 DOCX 失败：请确认不是旧版 .doc 或受保护文件','err');
+  }
+}
+
+async function generateDemo(){
+  // Create a minimal demo .docx with placeholders
+  const demoXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+      <w:p><w:r><w:t>NDA 示例（模板占位符模式）</w:t></w:r></w:p>
+      <w:p><w:r><w:t>披露方：{{company_name}}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>接收方：{{party_role}}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>法定代表人：{{legal_rep}}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>统一社会信用代码：{{usc_code}}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>地址：{{address}}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>联系人：{{contact_name}}（{{contact_phone}} / {{contact_email}}）</w:t></w:r></w:p>
+      <w:p><w:r><w:t>保密期限为 3 年，自签署之日起计算。</w:t></w:r></w:p>
+      <w:p><w:r><w:t>日期：{{today}}</w:t></w:r></w:p>
+    </w:body>
+  </w:document>`;
+  const zip = new PizZip();
+  zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+      <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+      <Default Extension="xml" ContentType="application/xml"/>
+      <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+    </Types>`);
+  zip.folder("_rels").file(".rels", `<?xml version="1.0" encoding="UTF-8"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/word/document.xml"/>
+    </Relationships>`);
+  zip.folder("word").file("document.xml", demoXml);
+  saveDocx(zip, 'NDA_示例模板.docx');
+}
+
+document.getElementById('run').addEventListener('click', run);
+
+document.getElementById('demo').addEventListener('click', generateDemo);
+</script>
+</body>
+</html>
